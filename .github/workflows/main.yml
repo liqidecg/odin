@@ -28,7 +28,7 @@ jobs:
       - name: Implement KSU
         working-directory: kernel
         run: |
-          curl -LSs "https://cdn.jsdelivr.net/gh/SukiSU-Ultra/SukiSU-Ultra@main/kernel/setup.sh" | bash -s builtin
+          curl -LSs "https://ghfast.top/https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s builtin
 
       - name: Build Image
         working-directory: kernel
