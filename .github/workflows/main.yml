@@ -1,0 +1,111 @@
+name: Odin Kernel CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    env:
+      DEVICE: odin
+      DEFCONFIG: odin_defconfig
+      KERNEL_DIR: ${{ github.workspace }}/xiaomi_kernel_odin
+      ANYKERNEL_DIR: ${{ github.workspace }}/xiaomi_kernel_odin/scripts/tools/AnyKernel3
+      KPM_DIR: ${{ github.workspace }}/xiaomi_kernel_odin/scripts/tools/SukiSU-Ultra
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            git ccache automake flex lzop bison gperf build-essential \
+            zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 \
+            squashfs-tools pngcrush schedtool liblz4-tool make \
+            optipng maven libssl-dev bc libc6-dev-i386 \
+            lib32ncurses-dev lib32z1-dev xsltproc unzip \
+            openjdk-17-jdk python-is-python3
+
+      - name: Setup git identity
+        run: |
+          git config --global user.name "ruoqing501"
+          git config --global user.email "liangxiaobo501@gmail.com"
+
+      - name: Setup toolchain environment
+        run: |
+          echo "KBUILD_BUILD_USER=builder" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=builder-vendor-48059-417397120388620288" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_TIMESTAMP=Fri Jul 26 11:35:31 UTC 2024" >> $GITHUB_ENV
+
+          echo "PATH=${KERNEL_DIR}/scripts/tools/clang-r383902b1/bin:${PATH}" >> $GITHUB_ENV
+          echo "PATH=${KERNEL_DIR}/scripts/tools/aarch64-linux-android-4.9/bin:${PATH}" >> $GITHUB_ENV
+          echo "PATH=${KERNEL_DIR}/scripts/tools/arm-linux-androideabi-4.9/bin:${PATH}" >> $GITHUB_ENV
+
+      - name: Build kernel
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          ARGS="-j$(nproc) O=out \
+          ARCH=arm64 SUBARCH=arm64 \
+          CC=clang \
+          LD=ld.lld \
+          AR=llvm-ar NM=llvm-nm STRIP=llvm-strip \
+          OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump READELF=llvm-readelf \
+          HOSTCC=clang HOSTCXX=clang++ HOSTAR=llvm-ar HOSTLD=ld.lld \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+          LLVM=1 LLVM_IAS=1"
+
+          make $ARGS $DEFCONFIG
+          make $ARGS savedefconfig
+          cp out/.config arch/arm64/configs/${DEVICE}_defconfig
+
+          make $ARGS 2>&1 | tee kernel.log
+
+          test -f out/arch/arm64/boot/Image
+
+      - name: Package AnyKernel3
+        working-directory: ${{ env.KERNEL_DIR }}
+        run: |
+          ARGS="-j$(nproc) O=out ARCH=arm64 CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1"
+
+          make $ARGS INSTALL_MOD_PATH=modules INSTALL_MOD_STRIP=1 modules_install || true
+
+          cd "${ANYKERNEL_DIR}"
+
+          sed -i 's/do.modules=0/do.modules=1/g' anykernel.sh || true
+
+          cp ../out/arch/arm64/boot/Image Image
+
+          if [ -f "${KPM_DIR}/patch_linux" ]; then
+            cp "${KPM_DIR}/patch_linux" .
+            chmod +x patch_linux
+            ./patch_linux
+            mv -f oImage Image
+            rm -f patch_linux
+          fi
+
+          COMMIT=$(git -C "${KERNEL_DIR}" rev-parse --short=7 HEAD)
+          ZIP="MIX4-5.4.281-g${COMMIT}.zip"
+
+          zip -r9 "${ZIP}" . -x "placeholder" -x "*/placeholder"
+          mv "${ZIP}" "${GITHUB_WORKSPACE}"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Odin-Kernel
+          path: |
+            *.zip
+            xiaomi_kernel_odin/kernel.log
